@@ -1,5 +1,28 @@
 # @solidjs/signals
 
+## 2.0.0-rc.10
+
+### Patch Changes
+
+- 739404d: Fix an optimistic override superseded by its source's landing leaking the landed truth into a later action's lane frame (#3548). A lane pass composes the frame it applies ahead of the commit, so a superseded node now serves it the displayed override — A18 (c): the screen keeps the override until the owning transaction commits — and the reader is recorded for replay at that commit, since the superseded drop notifies nobody. Before, a fresh write's lane reaching a reader shared with the superseded node (two filtered keyed `<For>` lists over one optimistic store) re-derived one list from the truth while its neighbour still displayed the override, rendering the same row in two lanes.
+- ebc1b03: A zombie that recomputes stays a zombie (#3543). `recompute` and `updateIfNecessary` rewrote `_flags` wholesale and dropped `REACTIVE_ZOMBIE`, the flag that says a node sits on its owner's deferred-disposal chain. While any transaction was parked, the scheduler reruns zombies for mainline writes (#3463), so an owner that recreates a child each pass — a compiled `<Show when={a() && b()}>` condition — had its previous child rerun de-flagged; at the owner's commit `disposeChildren` then spliced that child out of the _live_ chain instead of the pending one, orphaning the current child. The orphan stayed subscribed and recomputing forever: one leaked node per update, until `HUGE_FAN_OUT`. The flag now survives every per-pass wipe.
+
+  A consequence pinned in `lane-outside-view.test.ts`: a zombie whose removal is staged by a transaction no longer holds that transaction's commit after it reruns — its say was always meant to be moot for the verdict that disposes it, and the extra hold was this bug.
+
+- 55779c0: `Loading`'s `on` prop is a dependency list, not a key (#3540). The expression is tracked and its value is never compared: a write to anything it reads — plain, optimistic, or a source going pending — **re-arms** the boundary. A re-armed boundary that has something pending under it shows its fallback again; one with nothing pending does nothing (no fallback flash). `latest()` inside `on` is redundant.
+
+  The re-arm lands in the **current frame**. A write that makes content pending is held by the readers still showing the old content, and its batch commits when the data lands — but the boundary's swap to its fallback is not part of that batch: it is applied at the flush's finalize, mainline, past any transaction park, so the fallback shows now beside whatever the write is still holding elsewhere on the page. Previously the swap was staged into the pending write's transaction and landed with its commit, by which point the data had arrived and the fallback never showed whenever any other reader of the same data existed (#3524, #3529). The children are not re-created; they stay alive behind the fallback.
+
+  `Errored` accepts the same `on`: while it shows its error fallback, a change to a dependency clears the caught error and retries the children (reset keys). `createErrorBoundary` takes `{ on }` as its third argument.
+
+  Boundaries are exempt from A29 born-held: a `Loading` mounted while a transaction holds what it reads shows its fallback now (and reveals the staged content at the commit) instead of being born held with the transaction. Born held stays right for a plain memo or effect — published, its value would tear the frame — but a boundary that has not revealed is the exception by definition: its job is to catch what is not ready under it rather than let it hold. This also closes the static-vs-function-child `<Show keyed>` inconsistency from the issue.
+
+- f2bd662: `OBSERVE.subjectOf` JSDoc names the `subscriptions()` export of `solid-js/attribution` rather than the removed `attribution.subscriptions()` method
+- 756b1b3: `omit()`'s no-Proxy copy path re-homes accessors with the source as receiver instead of forwarding the descriptor, matching `merge()`'s copy path. A prop's getter is defined only for a read through its own object — the compiler's server-side props keep their state on the instance — so a copy that must stay live defines its own getter that reads through the source.
+- 27bb3fa: Dev-only owner-chain invariant on the disposal splice (#3543 follow-up). `disposeChildren` unlinks a self-disposing node from its parent's child chain by position: a node with no `_prevSibling` is written up as the chain's head. The only way that is false is a node flagged live that sits elsewhere — the #3543 shape, a zombie that lost `REACTIVE_ZOMBIE` — and the write then clobbers the head with a stale `_nextSibling`, orphaning every live child ahead of it. Dev builds now assert `parent._firstChild === node` at that write and report `[INVARIANT_VIOLATION] owner-chain-head` (thrown under `__TEST__`, `console.error` diagnostic in dev). The check is `__DEV__`-guarded and folds out of the prod and observe tiers (size unchanged).
+
+  Also pins the create-pass shape of #3543: a lazy memo zombified by its owner's rerun and first read from the owner's new pass goes through `recompute(comp, true)`, whose flag wipe must carry `REACTIVE_ZOMBIE` too.
+
 ## 2.0.0-rc.9
 
 ### Patch Changes

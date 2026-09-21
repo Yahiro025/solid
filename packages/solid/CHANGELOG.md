@@ -1,5 +1,35 @@
 # solid-js
 
+## 2.0.0-rc.10
+
+### Patch Changes
+
+- ae2bc9f: Hybrid store hydration waits for the server's answer before handing off to the client (#3498)
+
+  Root cause: the hybrid store gate flipped synchronously at the end of the claim pass. With `loadingValue`/`seedLoadingValue` the server serializes a _pending_ placeholder whose real answer arrives later over the stream; flipping before it landed let the client takeover supersede the server flight, so the engine dropped the server's answer and the store never showed it.
+
+  The handoff now follows four rules:
+  1. **It waits for the first server answer to land.** Synchronous when the serialized value is already settled, as before. When it is pending, the handoff happens when that answer lands — resolve or reject — by adopting it as a one-yield stream whose next pull (the engine's own continuation after the landing commits) is the handoff. It never waits on hydration end and never holds hydration open.
+  2. **Only the handoff run's first yield is the duplicate.** Later runs (a dependency change, `refresh()`) run the client source against the real draft and commit their first yield normally; previously every run kept discarding it.
+  3. **A rejected server answer is the adopted answer.** The store surfaces the error until a `refresh()` (a non-handoff run) replaces it; the client's handoff run does not paper over the rejection.
+  4. **A dependency change before the pending answer lands supersedes it.** Like any new pending change, it cancels the incoming server answer: the store goes live on that run — genuinely new work, not a handoff, so its first yield commits — and the abandoned server flight's landing or rejection is dropped without applying to the store or running it again.
+
+- 55779c0: `Loading`'s `on` prop is a dependency list, not a key (#3540). The expression is tracked and its value is never compared: a write to anything it reads — plain, optimistic, or a source going pending — **re-arms** the boundary. A re-armed boundary that has something pending under it shows its fallback again; one with nothing pending does nothing (no fallback flash). `latest()` inside `on` is redundant.
+
+  The re-arm lands in the **current frame**. A write that makes content pending is held by the readers still showing the old content, and its batch commits when the data lands — but the boundary's swap to its fallback is not part of that batch: it is applied at the flush's finalize, mainline, past any transaction park, so the fallback shows now beside whatever the write is still holding elsewhere on the page. Previously the swap was staged into the pending write's transaction and landed with its commit, by which point the data had arrived and the fallback never showed whenever any other reader of the same data existed (#3524, #3529). The children are not re-created; they stay alive behind the fallback.
+
+  `Errored` accepts the same `on`: while it shows its error fallback, a change to a dependency clears the caught error and retries the children (reset keys). `createErrorBoundary` takes `{ on }` as its third argument.
+
+  Boundaries are exempt from A29 born-held: a `Loading` mounted while a transaction holds what it reads shows its fallback now (and reveals the staged content at the commit) instead of being born held with the transaction. Born held stays right for a plain memo or effect — published, its value would tear the frame — but a boundary that has not revealed is the exception by definition: its job is to catch what is not ready under it rather than let it hold. This also closes the static-vs-function-child `<Show keyed>` inconsistency from the issue.
+
+- Updated dependencies [739404d]
+- Updated dependencies [ebc1b03]
+- Updated dependencies [55779c0]
+- Updated dependencies [f2bd662]
+- Updated dependencies [756b1b3]
+- Updated dependencies [27bb3fa]
+  - @solidjs/signals@2.0.0-rc.10
+
 ## 2.0.0-rc.9
 
 ### Patch Changes
